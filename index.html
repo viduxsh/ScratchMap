@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Advanced Scratch Map - Deep Parser</title>
+        <link rel="icon" type="image/x-icon" href="https://img.icons8.com/fluency/48/address.png">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <style>
+            :root {
+                --bg: #0f172a;
+                --card: #1e293b;
+                --accent: #38bdf8;
+                --text: #f1f5f9;
+            }
+            body { margin: 0; font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; }
+            #header { padding: 1.5rem; background: var(--card); border-bottom: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+            .container { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; width: 100%; }
+            #map { flex-grow: 1; z-index: 1; }
+            .upload-btn { background: var(--accent); color: var(--bg); padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+            .upload-btn:hover { opacity: 0.9; }
+            #status { font-size: 0.875rem; color: #94a3b8; }
+            input[type="file"] { display: none; }
+        </style>
+    </head>
+    <body>
+        <div id="header">
+            <div class="container">
+                <div>
+                    <div style="font-size: 1.25rem; font-weight: 800; color: var(--accent);">SCRATCH MAP PRO</div>
+                    <div id="status">Waiting for Timeline Edits.json file...</div>
+                </div>
+                <label class="upload-btn">
+                    LOAD JSON
+                    <input type="file" id="fileInput" accept=".json">
+                </label>
+                <label class="upload-btn">
+                    <a href="https://takeout.google.com/" target="_blank">Google Takeout</a>
+                </label>
+            </div>
+        </div>
+        <div id="map"></div>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script>
+            let map;
+
+            function initMap() {
+                try {
+                    map = L.map('map', { 
+                        zoomControl: true 
+                    }).setView([41.9, 12.5], 5);
+
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                        attribution: '© OpenStreetMap'
+                    }).addTo(map);
+
+                    document.getElementById('status').innerText = "Map ready. Load the JSON file.";
+
+                    map.locate({setView: true, maxZoom: 12});
+                    
+                    map.on('locationerror', function() {
+                        console.log("Location denied or unavailable");
+                        document.getElementById('status').innerText = "Location not available. Please upload the JSON file.";
+                    });
+
+                } catch (e) {
+                    console.error("Error initializing map:", e);
+                    document.getElementById('status').innerText = "Error loading the map.";
+                }
+            }
+
+            window.onload = initMap;
+
+            const fileInput = document.getElementById('fileInput');
+            fileInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                document.getElementById('status').innerText = "Analyzing data...";
+
+                reader.onload = function(event) {
+                    try {
+                        const jsonObj = JSON.parse(event.target.result);
+                        const points = [];
+
+                        function findCoords(obj) {
+                            if (!obj || typeof obj !== 'object') return;
+                            if ((obj.latE7 || obj.latitudeE7) && (obj.lngE7 || obj.longitudeE7)) {
+                                const lat = (obj.latE7 || obj.latitudeE7) / 1e7;
+                                const lng = (obj.lngE7 || obj.longitudeE7) / 1e7;
+                                if (!isNaN(lat) && !isNaN(lng)) points.push([lat, lng]);
+                            }
+                            for (let key in obj) {
+                                if (typeof obj[key] === 'object') findCoords(obj[key]);
+                            }
+                        }
+
+                        findCoords(jsonObj);
+
+                        if (points.length > 0) {
+                            const markers = L.featureGroup();
+                            points.forEach(p => {
+                                L.circleMarker(p, {
+                                    radius: 3,
+                                    fillColor: "#38bdf8",
+                                    color: "#fff",
+                                    weight: 0.5,
+                                    fillOpacity: 0.7
+                                }).addTo(markers);
+                            });
+                            markers.addTo(map);
+                            map.fitBounds(markers.getBounds());
+                            document.getElementById('status').innerText = "Found " + points.length + " locations.";
+                        } else {
+                            document.getElementById('status').innerText = "No coordinates found.";
+                        }
+                    } catch (err) {
+                        document.getElementById('status').innerText = "Error reading file.";
+                    }
+                };
+                reader.readAsText(file);
+            });
+        </script>
+    </body>
+</html>
