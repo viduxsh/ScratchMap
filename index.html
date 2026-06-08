@@ -12,14 +12,17 @@
                 --card: #1e293b;
                 --accent: #38bdf8;
                 --text: #f1f5f9;
+                --success: #22c55e;
             }
             body { margin: 0; font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; }
             #header { padding: 1.5rem; background: var(--card); border-bottom: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
             .container { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; width: 100%; }
             #map { flex-grow: 1; z-index: 1; }
-            .upload-btn { background: var(--accent); color: var(--bg); padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+            .upload-btn { background: var(--accent); color: var(--bg); padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; text-decoration: none; display: inline-block; }
             .upload-btn:hover { opacity: 0.9; }
-            #status { font-size: 0.875rem; color: #94a3b8; }
+            #status { font-size: 0.875rem; color: #94a3b8; margin-top: 0.25rem; }
+            .stats-container { text-align: right; }
+            #world-stats { font-size: 1.1rem; font-weight: 700; color: var(--success); }
             input[type="file"] { display: none; }
         </style>
     </head>
@@ -28,44 +31,53 @@
             <div class="container">
                 <div>
                     <div style="font-size: 1.25rem; font-weight: 800; color: var(--accent);">SCRATCH MAP PRO</div>
-                    <div id="status">Waiting for Timeline Edits.json file...</div>
+                    <div id="status">Loading world boundaries...</div>
                 </div>
-                <label class="upload-btn">
-                    LOAD JSON
-                    <input type="file" id="fileInput" accept=".json">
-                </label>
-                <label class="upload-btn">
-                    <a href="https://takeout.google.com/" target="_blank">Google Takeout</a>
-                </label>
+                <div class="stats-container">
+                    <div id="world-stats">World Explored: 0%</div>
+                    <div id="countries-count" style="font-size: 0.85rem; color: #94a3b8;">0 / 0 Countries</div>
+                </div>
+                <div>
+                    <label class="upload-btn">
+                        LOAD JSON
+                        <input type="file" id="fileInput" accept=".json">
+                    </label>
+                    <a href="https://takeout.google.com/" target="_blank" class="upload-btn" style="background: #475569; color: #fff; margin-left: 0.5rem;">Google Takeout</a>
+                </div>
             </div>
         </div>
         <div id="map"></div>
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
         <script>
             let map;
+            let worldGeoJSON = null;
+            const totalCountriesInDataset = 177;
 
-            function initMap() {
+            async function initMap() {
                 try {
-                    map = L.map('map', { 
-                        zoomControl: true 
-                    }).setView([41.9, 12.5], 5);
+                    map = L.map('map', { zoomControl: true }).setView([41.9, 12.5], 5);
 
                     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                         attribution: '© OpenStreetMap'
                     }).addTo(map);
 
-                    document.getElementById('status').innerText = "Map ready. Load the JSON file.";
+                    document.getElementById('status').innerText = "Loading geographic data...";
+                    
+                    const response = await fetch('https://raw.githubusercontent.com/datasets/geo-boundaries-world-110m/master/countries.geojson');
+                    worldGeoJSON = await response.json();
+
+                    document.getElementById('status').innerText = "Map ready. Load the timeline JSON file.";
+                    document.getElementById('countries-count').innerText = `0 / ${worldGeoJSON.features.length} Countries`;
 
                     map.locate({setView: true, maxZoom: 12});
-                    
                     map.on('locationerror', function() {
-                        console.log("Location denied or unavailable");
-                        document.getElementById('status').innerText = "Location not available. Please upload the JSON file.";
+                        document.getElementById('status').innerText = "Location not available. Please upload the timeline JSON file.";
                     });
 
                 } catch (e) {
-                    console.error("Error initializing map:", e);
-                    document.getElementById('status').innerText = "Error loading the map.";
+                    console.error("Error initializing map or data:", e);
+                    document.getElementById('status').innerText = "Error loading initial assets.";
                 }
             }
 
@@ -74,10 +86,10 @@
             const fileInput = document.getElementById('fileInput');
             fileInput.addEventListener('change', function(e) {
                 const file = e.target.files[0];
-                if (!file) return;
+                if (!file || !worldGeoJSON) return;
 
                 const reader = new FileReader();
-                document.getElementById('status').innerText = "Analyzing data...";
+                document.getElementById('status').innerText = "Analyzing data & processing countries...";
 
                 reader.onload = function(event) {
                     try {
@@ -100,6 +112,8 @@
 
                         if (points.length > 0) {
                             const markers = L.featureGroup();
+                            const visitedCountries = new Set();
+
                             points.forEach(p => {
                                 L.circleMarker(p, {
                                     radius: 3,
@@ -108,14 +122,49 @@
                                     weight: 0.5,
                                     fillOpacity: 0.7
                                 }).addTo(markers);
+
+                                const pt = turf.point([p[1], p[0]]);
+                                
+                                for (let feature of worldGeoJSON.features) {
+                                    const countryName = feature.properties.name || feature.properties.NAME;
+                                    if (visitedCountries.has(countryName)) continue;
+
+                                    if (turf.booleanPointInPolygon(pt, feature)) {
+                                        visitedCountries.add(countryName);
+                                        break; 
+                                    }
+                                }
                             });
+
                             markers.addTo(map);
                             map.fitBounds(markers.getBounds());
-                            document.getElementById('status').innerText = "Found " + points.length + " locations.";
+
+                            const totalCountries = worldGeoJSON.features.length;
+                            const visitedCount = visitedCountries.size;
+                            const percentage = ((visitedCount / totalCountries) * 100).toFixed(1);
+
+                            document.getElementById('status').innerText = `Found ${points.length} locations across ${visitedCount} countries.`;
+                            document.getElementById('world-stats').innerText = `World Explored: ${percentage}%`;
+                            document.getElementById('countries-count').innerText = `${visitedCount} / ${totalCountries} Countries`;
+                            
+                            L.geoJSON(worldGeoJSON, {
+                                filter: function(feature) {
+                                    const name = feature.properties.name || feature.properties.NAME;
+                                    return visitedCountries.has(name);
+                                },
+                                style: {
+                                    color: "#22c55e",
+                                    weight: 1,
+                                    fillColor: "#22c55e",
+                                    fillOpacity: 0.2
+                                }
+                            }).addTo(map);
+
                         } else {
                             document.getElementById('status').innerText = "No coordinates found.";
                         }
                     } catch (err) {
+                        console.error(err);
                         document.getElementById('status').innerText = "Error reading file.";
                     }
                 };
